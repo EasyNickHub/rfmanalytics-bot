@@ -6,12 +6,29 @@ Telegram-бот для сервиса RfmAnalytics PRO (@rfmanalytics_pro_bot)
 
 import sys
 import os
+import time
+import hmac
+import hashlib
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot import types
 
 TOKEN = "9130209345:AAGP_FnklylgXOiUeXyte8bx3TIQkUU4ofY"
+LICENSE_HMAC_SECRET = "RFM_SECRET_KEY_2026_MASTER_SIGNATURE"
+
+
+def generate_license_key(device_id: str, days: int) -> str:
+    clean_id = device_id.strip().upper()
+    expiry_sec = int(time.time()) + days * 86400
+    payload = f"RFMPRO.{clean_id}.{expiry_sec}"
+    sig = hmac.new(
+        LICENSE_HMAC_SECRET.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()[:16].upper()
+    return f"{payload}.{sig}"
+
 OFERTA_URL = "https://telegra.ph/Publichnaya-oferta-RfmAnalytics-PRO-11-14-2"
 SUPPORT_TG = "@MaXXXim321"
 SUPPORT_EMAIL = "maximkrabik96@gmail.com"
@@ -279,6 +296,76 @@ def handle_support(message):
         SUPPORT_TEXT,
         reply_markup=get_info_inline_keyboard()
     )
+
+
+ADMIN_USERNAMES = {"maxxxIm321".lower(), "maxxim321"}
+
+
+@bot.message_handler(commands=["genkey", "key"])
+def handle_genkey(message):
+    username = (message.from_user.username or "").strip().lower()
+    if username not in ADMIN_USERNAMES:
+        bot.send_message(
+            message.chat.id,
+            "⛔ Эта команда доступна только администратору сервиса."
+        )
+        return
+
+    parts = (message.text or "").strip().split()
+    if len(parts) < 2:
+        help_text = (
+            "🔑 <b>Генератор лицензионных ключей RfmAnalytics PRO</b>\n\n"
+            "Отправьте команду с <code>Device ID</code> клиента и сроком (в месяцах: <code>1</code>, <code>3</code> или <code>6</code>):\n\n"
+            "• На 1 месяц (30 дней):\n<code>/genkey RFM-XXXX-YYYY 1</code>\n\n"
+            "• На 3 месяца (90 дней):\n<code>/genkey RFM-XXXX-YYYY 3</code>\n\n"
+            "• На 6 месяцев (180 дней):\n<code>/genkey RFM-XXXX-YYYY 6</code>\n\n"
+            "💡 <i>Или просто отправьте <code>/genkey RFM-XXXX-YYYY</code> — бот сразу сгенерирует ключи на все 3 тарифа!</i>"
+        )
+        bot.send_message(message.chat.id, help_text)
+        return
+
+    device_id = parts[1].strip().upper()
+    if not device_id.startswith("RFM-") or len(device_id) < 10:
+        bot.send_message(
+            message.chat.id,
+            "⚠️ Неверный формат Device ID. Пример правильного ID: <code>RFM-3C9E-8977</code>"
+        )
+        return
+
+    if len(parts) >= 3:
+        m_arg = parts[2].strip().lower()
+        months_map = {
+            "1": (30, "1 месяц (30 дней)"),
+            "1m": (30, "1 месяц (30 дней)"),
+            "3": (90, "3 месяца (90 дней)"),
+            "3m": (90, "3 месяца (90 дней)"),
+            "6": (180, "6 месяцев (180 дней)"),
+            "6m": (180, "6 месяцев (180 дней)"),
+            "12": (365, "12 месяцев (365 дней)"),
+            "12m": (365, "12 месяцев (365 дней)"),
+        }
+        days, label = months_map.get(m_arg, (30, "1 месяц (30 дней)"))
+        key = generate_license_key(device_id, days)
+        resp = (
+            f"✅ <b>Лицензионный ключ сформирован!</b>\n\n"
+            f"📱 <b>Устройство:</b> <code>{device_id}</code>\n"
+            f"⏳ <b>Тариф:</b> {label}\n\n"
+            f"🔑 <b>Ключ активации (нажмите, чтобы скопировать):</b>\n"
+            f"<code>{key}</code>"
+        )
+        bot.send_message(message.chat.id, resp)
+    else:
+        key_1m = generate_license_key(device_id, 30)
+        key_3m = generate_license_key(device_id, 90)
+        key_6m = generate_license_key(device_id, 180)
+        resp = (
+            f"✅ <b>Ключи для устройства <code>{device_id}</code>:</b>\n\n"
+            f"1️⃣ <b>На 1 месяц (299 ₽):</b>\n<code>{key_1m}</code>\n\n"
+            f"2️⃣ <b>На 3 месяца (790 ₽):</b>\n<code>{key_3m}</code>\n\n"
+            f"3️⃣ <b>На 6 месяцев (1 390 ₽):</b>\n<code>{key_6m}</code>\n\n"
+            f"<i>Нажмите на нужный ключ, чтобы скопировать и отправить клиенту.</i>"
+        )
+        bot.send_message(message.chat.id, resp)
 
 @bot.message_handler(func=lambda msg: True)
 def handle_text_buttons(message):
