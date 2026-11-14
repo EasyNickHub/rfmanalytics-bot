@@ -118,11 +118,35 @@ def get_main_reply_keyboard():
     markup.add(btn_oferta, btn_support)
     return markup
 
+# Хранилище сессий пользователей (Device ID и выбранный тариф)
+user_sessions = {}
+
+def get_tariffs_inline_keyboard():
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    btn_1m = types.InlineKeyboardButton("💳 Оформить 1 месяц — 299 ₽", callback_data="buy_1m")
+    btn_3m = types.InlineKeyboardButton("💳 Оформить 3 месяца — 790 ₽ (Выгода 12%)", callback_data="buy_3m")
+    btn_6m = types.InlineKeyboardButton("💳 Оформить 6 месяцев — 1 390 ₽ (Хит -22%)", callback_data="buy_6m")
+    
+    markup.add(btn_1m)
+    markup.add(btn_3m)
+    markup.add(btn_6m)
+    
+    row_links = [
+        types.InlineKeyboardButton("📜 Оферта", url=OFERTA_URL),
+        types.InlineKeyboardButton("💬 Поддержка", url="https://t.me/MaXXXim321")
+    ]
+    markup.row(*row_links)
+    return markup
+
 def get_info_inline_keyboard():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_oferta_link = types.InlineKeyboardButton("📜 Открыть оферту", url=OFERTA_URL)
-    btn_support_link = types.InlineKeyboardButton("💬 Поддержка", url="https://t.me/MaXXXim321")
-    markup.add(btn_oferta_link, btn_support_link)
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    btn_tariffs_action = types.InlineKeyboardButton("💎 Выбрать тариф и оплатить", callback_data="show_tariffs")
+    row_links = [
+        types.InlineKeyboardButton("📜 Открыть оферту", url=OFERTA_URL),
+        types.InlineKeyboardButton("💬 Поддержка", url="https://t.me/MaXXXim321")
+    ]
+    markup.add(btn_tariffs_action)
+    markup.row(*row_links)
     return markup
 
 @bot.message_handler(commands=["start"])
@@ -139,21 +163,27 @@ def handle_start(message):
 
     if deep_link:
         plan_names = {
-            "pro_1m": "1 месяц (299 ₽)",
-            "pro_3m": "3 месяца (790 ₽)",
-            "pro_6m": "6 месяцев (1 390 ₽)",
-            "pro_12m": "12 месяцев"
+            "pro_1m": ("1 месяц (299 ₽)", 299),
+            "pro_3m": ("3 месяца (790 ₽)", 790),
+            "pro_6m": ("6 месяцев (1 390 ₽)", 1390),
+            "pro_12m": ("12 месяцев", 2490)
         }
         parts = deep_link.split("_", 2)
         if len(parts) >= 3 and f"{parts[0]}_{parts[1]}" in plan_names:
             plan_key = f"{parts[0]}_{parts[1]}"
-            selected_plan = plan_names.get(plan_key)
+            plan_title, price = plan_names.get(plan_key)
             device_id = parts[2]
+            user_sessions[message.from_user.id] = {"device_id": device_id, "tariff": {"name": plan_title, "price": price}}
             welcome_msg += (
-                f"\n\n🎯 <b>Выбранный тариф:</b> {selected_plan}\n"
+                f"\n\n🎯 <b>Выбранный тариф:</b> {plan_title}\n"
                 f"📱 <b>Device ID устройства:</b> <code>{device_id}</code>\n\n"
-                f"Для оплаты и получения ключа активации обратитесь в поддержку: {SUPPORT_TG}"
+                f"Нажмите кнопку ниже, чтобы перейти к оформлению и получить лицензионный ключ:"
             )
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton(f"💳 Оплатить {price} ₽", url=f"https://t.me/MaXXXim321?text=Здравствуйте!%20Хочу%20оплатить%20RfmAnalytics%20PRO%20({plan_title})%20для%20устройства%20{device_id}"))
+            markup.add(types.InlineKeyboardButton("💎 Выбрать другой тариф", callback_data="show_tariffs"))
+            bot.send_message(message.chat.id, welcome_msg, reply_markup=markup)
+            return
         else:
             welcome_msg += f"\n\n<i>Получен параметр активации: <code>{deep_link}</code></i>"
 
@@ -177,8 +207,61 @@ def handle_tariffs(message):
     bot.send_message(
         message.chat.id,
         TARIFFS_TEXT,
-        reply_markup=get_info_inline_keyboard()
+        reply_markup=get_tariffs_inline_keyboard()
     )
+
+@bot.callback_query_handler(func=lambda call: call.data == "show_tariffs")
+def callback_show_tariffs(call):
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        TARIFFS_TEXT,
+        reply_markup=get_tariffs_inline_keyboard()
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data in ["buy_1m", "buy_3m", "buy_6m"])
+def callback_buy_tariff(call):
+    bot.answer_callback_query(call.id)
+    tariffs_map = {
+        "buy_1m": {"name": "1 месяц (30 дней)", "price": 299, "days": 30},
+        "buy_3m": {"name": "3 месяца (90 дней)", "price": 790, "days": 90},
+        "buy_6m": {"name": "6 месяцев (180 дней)", "price": 1390, "days": 180},
+    }
+    selected = tariffs_map.get(call.data)
+    user_id = call.from_user.id
+    
+    session = user_sessions.get(user_id, {})
+    session["tariff"] = selected
+    user_sessions[user_id] = session
+
+    device_id = session.get("device_id")
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    # Кнопка связи с продавцом для мгновенной оплаты и выдачи
+    btn_pay = types.InlineKeyboardButton(
+        f"💳 Оплатить {selected['price']} ₽ (Робокасса / СБП)",
+        url=f"https://t.me/MaXXXim321?text=Здравствуйте!%20Хочу%20оплатить%20RfmAnalytics%20PRO%20на%20{selected['name']}%20за%20{selected['price']}р"
+    )
+    btn_change = types.InlineKeyboardButton("🔄 Выбрать другой тариф", callback_data="show_tariffs")
+    markup.add(btn_pay, btn_change)
+
+    device_info = f"<code>{device_id}</code>" if device_id else "<i>(будет привязан автоматически при переходе из приложения)</i>"
+
+    text = f"""
+🛒 <b>Оформление подписки RfmAnalytics PRO</b>
+
+• <b>Выбранный тариф:</b> {selected['name']}
+• <b>Сумма к оплате:</b> <b>{selected['price']} ₽</b>
+• <b>ID устройства (Device ID):</b> {device_info}
+
+⚡ <b>Как происходит выдача:</b>
+1. После подтверждения оплаты лицензионный ключ высылается <b>мгновенно</b> в этот диалог.
+2. Возврат возможен до момента активации ключа в приложении.
+
+Нажмите кнопку ниже для подтверждения и оплаты через Робокассу (СБП, банковские карты РФ) 👇
+"""
+    bot.send_message(call.message.chat.id, text, reply_markup=markup)
 
 @bot.message_handler(commands=["oferta"])
 def handle_oferta(message):
