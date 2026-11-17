@@ -1,1 +1,1 @@
-pyTelegramBotAPI>=4.37.0
+# No external dependencies required (standard library only)
